@@ -1,0 +1,29 @@
+# .gitignore
+
+# Environment variables
+.env
+config/.env
+
+# Virtual environment
+venv/
+*.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# IDE / Editor specific files
+.idea/
+.vscode/
+
+# Log files
+*.log
+
+# Output files
+*.json
+*.txt
+*.html
+*.png
+
+# ChromeDriver logs
+chromedriver.log
