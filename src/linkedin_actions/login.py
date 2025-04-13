@@ -6,16 +6,18 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
-# Assuming helpers are in ../utils relative to this file's location
+# Import helper from the utils directory
 from ..utils.helpers import human_delay
 
+# Define URL here or pass as argument, keeping it local for now
 LINKEDIN_LOGIN_URL = "https://www.linkedin.com/login"
 
-def _login_attempt(driver, email, password):
-    """Performs a single login attempt."""
+# Directly copied from the provided code
+def login_to_linkedin(driver, email, password):
+    """Logs into LinkedIn using provided credentials."""
     if not driver:
-        logging.error("WebDriver not initialized.")
-        return False, "WebDriver not initialized."
+        logging.error("WebDriver not initialized. Cannot proceed.")
+        return False
 
     logging.info(f"Navigating to LinkedIn login page: {LINKEDIN_LOGIN_URL}")
     try:
@@ -26,132 +28,107 @@ def _login_attempt(driver, email, password):
         logging.info("Login page loaded.")
     except TimeoutException:
         logging.error("Timed out waiting for the LinkedIn login page to load.")
-        return False, "Login page timeout"
+        return False
     except Exception as e:
         logging.error(f"Error navigating to login page: {e}")
-        return False, f"Navigation error: {e}"
+        return False
 
     try:
-        logging.info("Attempting to fill login credentials...")
+        logging.info("Attempting to log in...")
         # Find username/email field and enter email
         username_field = driver.find_element(By.ID, "username")
         username_field.clear()
         username_field.send_keys(email)
-        human_delay(0.6, 1.2)
+        human_delay(0.8, 1.5)
 
         # Find password field and enter password
         password_field = driver.find_element(By.ID, "password")
         password_field.clear()
         password_field.send_keys(password)
-        human_delay(0.6, 1.2)
+        human_delay(0.8, 1.5)
 
         # Find and click the login button
-        # Using a more robust XPath that works even if text changes slightly
-        login_button_xpath = "//button[contains(@aria-label, 'Sign in') or @type='submit']"
-        login_button = WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.XPATH, login_button_xpath))
+        login_button = driver.find_element(By.XPATH, "//button[@type='submit']")
+        WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[@type='submit']"))
         )
         login_button.click()
         logging.info("Login button clicked.")
         logging.info("Waiting for page transition after login click...")
 
-        # Wait for redirection indicating success, failure, or checkpoint
-        # Increased wait time as network/LinkedIn can be slow
-        WebDriverWait(driver, 30).until(
-            lambda d: "feed" in d.current_url or # Success
-                      "checkpoint" in d.current_url or # Security check
-                      "challenge" in d.current_url or # Another type of check
-                      "/login" not in d.current_url or # Maybe redirected somewhere else valid?
-                      d.find_elements(By.ID, "error-for-password") # Error message appeared
+        # Wait for either the feed page or a potential security check/error page
+        WebDriverWait(driver, 20).until(
+            lambda d: "feed" in d.current_url or
+                      "checkpoint" in d.current_url or
+                      "challenge" in d.current_url or
+                      "/login" not in d.current_url
         )
 
         current_url = driver.current_url
         logging.info(f"URL after login attempt: {current_url}")
 
-        # Check results
         if "feed" in current_url:
             logging.info("Login Successful! Redirected to the feed.")
-            return True, "Login successful"
+            return True
         elif "checkpoint" in current_url or "challenge" in current_url:
-            logging.warning("Login Alert: LinkedIn security check required (CAPTCHA, verification, etc.).")
-            # You might need manual intervention here
-            # Add a prompt for manual completion
-            print("\n" + "*"*60)
-            print("ACTION REQUIRED: Please complete the security verification")
-            print("in the automated browser window.")
-            print("*"*60 + "\n")
-            input("Press Enter here in the console AFTER completing the verification...")
-            # Re-check URL after manual step
+            logging.warning(
+                "Login Alert: LinkedIn is asking for a security check (CAPTCHA, phone verification, etc.).")
+            logging.info("Please complete the verification in the browser window...")
+            input("Press Enter after completing the verification manually...") # Exactly as in original code
             if "feed" in driver.current_url:
-                 logging.info("Manual verification successful. Proceeding.")
-                 return True, "Manual verification successful"
-            else:
-                 logging.error("Manual verification may have failed or timed out.")
-                 return False, "Manual verification failed"
-
+                logging.info("Verification successful! Now on feed.")
+                return True
+            return False
         elif "/login" in current_url:
             try:
-                error_msg_element = driver.find_element(By.CSS_SELECTOR, ".form__label--error") # Check common error class
-                if error_msg_element and error_msg_element.is_displayed():
-                    error_text = error_msg_element.text.strip()
-                    logging.error(f"Login Failed: {error_text}")
-                    return False, f"Login failed: {error_text}"
-                # Check for password specific error
-                error_msg_element = driver.find_element(By.ID, "error-for-password")
-                if error_msg_element and error_msg_element.is_displayed():
-                    error_text = error_msg_element.text.strip()
-                    logging.error(f"Login Failed: {error_text}")
-                    return False, f"Login failed: {error_text}"
-
+                error_msg = driver.find_element(By.ID, "error-for-password") # Using ID from original code
+                if error_msg.is_displayed():
+                    logging.error(f"Login Failed: {error_msg.text}")
+                    return False
             except NoSuchElementException:
-                logging.error("Login Failed: Still on login page, but no specific error message found. Check credentials.")
-                return False, "Login failed (no error message)"
+                logging.error("Login Failed: Still on login page, but no specific error message found.")
+                return False
             except Exception as e:
-                 logging.error(f"Login Failed: Error checking for failure messages: {e}")
-                 return False, f"Login failed (error check exception: {e})"
+                logging.error(f"Login Failed: Error checking for login failure messages: {e}")
+                return False
         else:
-            # Successfully logged in but redirected somewhere unexpected? Treat as success for now.
-            logging.warning(f"Login Status Uncertain: Redirected to {current_url}. Assuming success.")
-            return True, "Login successful (unexpected redirect)"
-
-    except TimeoutException as e:
-        logging.error(f"Login Error: Timed out waiting for an element. {e}")
-        return False, "Login timeout"
-    except NoSuchElementException as e:
-        logging.error(f"Login Error: Could not find an element (username, password, or login button). UI Change? {e}")
-        return False, "Login element not found"
-    except Exception as e:
-        logging.error(f"An unexpected error occurred during login attempt: {e}")
-        return False, f"Unexpected login error: {e}"
-
-def login_with_retry(driver, email, password, max_attempts=2):
-    """Attempts to login multiple times."""
-    for attempt in range(1, max_attempts + 1):
-        logging.info(f"Login attempt {attempt}/{max_attempts}")
-        success, message = _login_attempt(driver, email, password)
-        if success:
+            logging.warning(f"Login Status Uncertain: Redirected to {current_url}")
+            # Original code didn't explicitly return True/False here, but implicitly assumed success if not login/checkpoint
+            # Let's return True to match the implied behavior of continuing the script.
             return True
 
-        logging.warning(f"Login attempt {attempt} failed: {message}")
+    except TimeoutException as e:
+        logging.error(f"Login Error: Timed out waiting for an element during login. {e}")
+        return False
+    except NoSuchElementException as e:
+        logging.error(
+            f"Login Error: Could not find an element (username, password, or login button). LinkedIn UI might have changed. {e}")
+        return False
+    except Exception as e:
+        logging.error(f"An unexpected error occurred during login: {e}")
+        return False
 
-        if attempt < max_attempts and "verification" not in message.lower(): # Don't retry immediately after manual step failure
-            wait_time = 5 * attempt # Progressive backoff
+# Directly copied from the provided code
+def login_with_retry(driver, email, password, max_attempts=2):
+    """Attempt to login multiple times in case of transient failures."""
+    for attempt in range(1, max_attempts + 1):
+        logging.info(f"Login attempt {attempt}/{max_attempts}")
+        # Calls the single attempt function defined above
+        if login_to_linkedin(driver, email, password):
+            logging.info("\nLogin successful. Proceeding...\n") # Added newline as in original
+            return True
+
+        if attempt < max_attempts:
+            wait_time = 5 * attempt  # Progressive backoff
             logging.info(f"Waiting {wait_time} seconds before retry...")
             time.sleep(wait_time)
-            # If somehow not on login page, navigate back
-            if "/login" not in driver.current_url and "checkpoint" not in driver.current_url and "challenge" not in driver.current_url:
-                 logging.info("Navigating back to login page for retry...")
-                 try:
-                     driver.get(LINKEDIN_LOGIN_URL)
-                     human_delay(2, 3)
-                 except Exception as e:
-                     logging.error(f"Failed to navigate back to login page: {e}")
-                     # Might be fatal, stop retrying
-                     break
-        elif "verification" in message.lower():
-            logging.error("Stopping login attempts after failed manual verification.")
-            break # Don't retry if manual step failed
 
+            # If we were redirected to an unexpected page, go back to login
+            if "/login" not in driver.current_url:
+                logging.info("Navigating back to login page for retry...")
+                # Use the constant defined at the top of this file
+                driver.get(LINKEDIN_LOGIN_URL)
+                time.sleep(2) # Using sleep from original logic
 
     logging.error(f"Failed to login after {max_attempts} attempts.")
     return False

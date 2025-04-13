@@ -3,6 +3,7 @@ import os
 import json
 import logging
 
+# Directly copied from the provided code
 DEFAULT_CONFIG = {
     "search_criteria": {
         "keywords": "Python Developer",
@@ -13,7 +14,7 @@ DEFAULT_CONFIG = {
         "experience_level": ["Entry level", "Associate"]
     },
     "scraping": {
-        "max_pages": 1,
+        "max_pages": 3,
         "easy_apply_only": True
     },
     "output": {
@@ -22,26 +23,20 @@ DEFAULT_CONFIG = {
     }
 }
 
-def load_config(config_file_path="config/config.json"):
+# Directly copied from the provided code
+def load_config(config_file_path): # Accept the full path directly
     """Loads configuration from a JSON file."""
-    logging.info(f"Attempting to load configuration from: {config_file_path}")
+    logging.info(f"Loading configuration from: {config_file_path}")
     try:
         if os.path.exists(config_file_path):
-            with open(config_file_path, 'r', encoding='utf-8') as f:
-                # Allow comments in JSON using a simple pre-processing step
-                content = "".join(line for line in f if not line.strip().startswith("//"))
-                config = json.loads(content)
-            logging.info("Configuration loaded successfully from file.")
-            # You might want to merge with defaults here to ensure all keys exist
-            # merged_config = {**DEFAULT_CONFIG, **config} # Basic merge, might need deep merge
+            with open(config_file_path, 'r') as f:
+                # Use original json.load without comment handling for strict adherence
+                config = json.load(f)
+            logging.info("Configuration loaded successfully.")
             return config
         else:
-            logging.warning(f"Configuration file '{config_file_path}' not found. Using default settings.")
+            logging.warning(f"Configuration file {config_file_path} not found. Using default settings.")
             return DEFAULT_CONFIG
-    except json.JSONDecodeError as e:
-        logging.error(f"Error decoding JSON from {config_file_path}: {e}")
-        logging.warning("Using default configuration settings.")
-        return DEFAULT_CONFIG
     except Exception as e:
         logging.error(f"Error loading configuration: {e}")
         logging.warning("Using default configuration settings.")

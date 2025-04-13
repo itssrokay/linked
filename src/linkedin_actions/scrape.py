@@ -5,228 +5,248 @@ from datetime import datetime
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException, StaleElementReferenceException
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, ElementClickInterceptedException, StaleElementReferenceException
 
-from ..utils.helpers import human_delay, human_like_scroll
+# Import helper from the utils directory
+from ..utils.helpers import human_delay
 
-def _get_element_text(driver, selectors, default="Unknown"):
-    """Safely extracts text from the first matching selector."""
-    for selector_type, selector_value in selectors:
-        try:
-            element = driver.find_element(selector_type, selector_value)
-            # Wait slightly for text to potentially populate if element was just rendered
-            # time.sleep(0.1)
-            text = element.text.strip()
-            if text:
-                return text
-        except (NoSuchElementException, StaleElementReferenceException):
-            continue
-        except Exception as e:
-            logging.warning(f"Error extracting text with {selector_type}={selector_value}: {e}")
-            continue
-    return default
-
+# Directly copied from the provided code
 def scrape_jobs_on_page(driver, easy_apply_only=True):
-    """Scrapes job listings from the currently visible results page."""
-    logging.info("--- Starting Job Scraping on Current Page ---")
+    """Scrapes job listings from the current page."""
+    # Note: The original code only scrapes the *first page* and has a hardcoded limit.
+    # This function replicates that behavior exactly. Pagination logic was not in the provided scrape function.
+    logging.info("\n--- Starting Job Scraping Process (Page 1) ---") # Original Log Message
+    logging.info("Starting to scrape jobs on the current page...") # Original Log Message
     job_data = []
-    processed_job_ids = set() # Keep track of jobs already processed on this page
 
     try:
-        # Wait for the job list container to be present
-        job_list_container_selector = ".jobs-search-results-list, .scaffold-layout__list ul"
-        WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, job_list_container_selector))
-        )
+        # Wait for job list container - trying multiple possible selectors (Original logic)
+        job_list_selectors = [
+            "div.scaffold-layout__list > ul",  # Original selector
+            ".jobs-search-results-list",      # Alternative from original
+            ".scaffold-layout__list",          # Detected in logs (from original comments)
+            "div[data-view-name='job-serp-jobs-list']" # Another possibility (from original comments)
+        ]
+        job_list_container = None
+        for selector in job_list_selectors:
+            try:
+                job_list_container = WebDriverWait(driver, 15).until( # Original timeout: 15s
+                    EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                )
+                break
+            except TimeoutException: continue
 
-        # --- Find Job Cards ---
-        # LinkedIn lazy-loads jobs as you scroll. Scroll down first to load more.
-        logging.info("Scrolling down to load job listings...")
-        last_height = driver.execute_script("return document.body.scrollHeight")
-        scroll_attempts = 0
-        max_scroll_attempts = 5 # Limit scrolling attempts
-        while scroll_attempts < max_scroll_attempts:
-             # Scroll down a bit more than window height
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            human_delay(1.5, 2.5) # Wait for jobs to load
-            new_height = driver.execute_script("return document.body.scrollHeight")
-            if new_height == last_height:
-                 logging.info("Reached bottom of page or no more jobs loaded.")
-                 break
-            last_height = new_height
-            scroll_attempts += 1
-        logging.info("Finished scrolling.")
-        human_delay(1,2) # Settle
+        if not job_list_container:
+            logging.error("Timed out waiting for the job list container.")
+            return job_data # Original return
 
-        # Get all job cards currently loaded
+        # Find all job cards - multiple possible selectors (Original logic)
         job_card_selectors = [
-            "li.jobs-search-results__list-item", # Common list item structure
-            "li.occludable-update",             # Another observed structure
-            "div.job-search-card"               # Card-based structure
+            ".jobs-search-results__list-item", # Original selector
+            "li.occludable-update",           # Original selector
+            "li.scaffold-layout__list-item", # Original selector
+            "div[data-job-id]"                # Original selector
         ]
         job_cards = []
         for selector in job_card_selectors:
             job_cards = driver.find_elements(By.CSS_SELECTOR, selector)
             if job_cards:
-                logging.info(f"Found {len(job_cards)} potential job listings using selector: {selector}")
+                logging.info(f"Found {len(job_cards)} job listings using selector: {selector}") # Original log
                 break
 
         if not job_cards:
-            logging.warning("No job cards found on this page after scrolling.")
-            # Check for "No results" message
+            logging.warning("No job cards found on this page.") # Original log
+            return job_data # Original return
+
+        # Process each job card (Using original limit and logic)
+        # !!! Original code had a hardcoded limit for testing: [:10] !!!
+        # Keep this limit to exactly match the provided code's behavior.
+        # Remove or change [:10] if you want to scrape all found cards on the page.
+        for index, job_card in enumerate(job_cards[:10]):
             try:
-                no_results = driver.find_element(By.CSS_SELECTOR, ".jobs-search-no-results")
-                if no_results:
-                    logging.info("Found 'No results' message on page.")
-            except NoSuchElementException:
-                pass # No results message not found, maybe just an empty list
-            return job_data
-
-        # --- Process Each Job Card ---
-        job_details_pane_selector = ".jobs-search__job-details--container, .jobs-details-pane" # Right-hand details pane
-
-        for index, job_card in enumerate(job_cards):
-            job_info = {}
-            try:
-                # Get a unique identifier for the job if possible (data-job-id or link href)
-                job_id = job_card.get_attribute("data-entity-urn") or job_card.get_attribute("data-job-id")
-                if not job_id:
-                     try:
-                          link_element = job_card.find_element(By.TAG_NAME, "a")
-                          job_id = link_element.get_attribute("href")
-                     except:
-                          job_id = f"card_{index}" # Fallback ID
-
-                if job_id in processed_job_ids:
-                    logging.debug(f"Skipping already processed job ID: {job_id}")
-                    continue
-
-                # Scroll the card into view for interaction
-                driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", job_card)
-                human_delay(0.6, 1.2)
-
-                # Click the job card to load details in the right pane
+                # Click on the job card to view details (Original logic)
                 try:
-                    job_card.click()
-                except ElementClickInterceptedException:
-                    logging.warning(f"Job card {index+1} click intercepted, trying JS click.")
-                    driver.execute_script("arguments[0].click();", job_card)
-                except StaleElementReferenceException:
-                    logging.warning(f"Job card {index+1} became stale before clicking. Skipping.")
-                    continue
-                except Exception as click_err:
-                     logging.warning(f"Could not click job card {index + 1}: {click_err}")
-                     continue
+                    driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", job_card) # Original scroll
+                    human_delay(0.5, 1.0) # Using helper
 
-                human_delay(1.5, 3.0) # Wait for details pane to update
+                    # Try clicking normally first (Original logic)
+                    try: job_card.click()
+                    except: driver.execute_script("arguments[0].click();", job_card) # Original JS fallback
 
-                # Wait for the details pane to show some content (e.g., job title)
-                try:
-                    WebDriverWait(driver, 15).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, f"{job_details_pane_selector} h2"))
-                    )
-                except TimeoutException:
-                    logging.warning(f"Timed out waiting for details pane to update for job {index + 1}. Skipping.")
-                    processed_job_ids.add(job_id) # Mark as processed even if failed
-                    continue
+                    human_delay(1.0, 2.0) # Using helper
+                except Exception as e:
+                    logging.warning(f"Could not click job card {index + 1}: {e}") # Original log
+                    continue # Original skip
 
-                # Check for Easy Apply button (if required)
-                easy_apply_present = False
+                # Wait for job details to load (Original logic)
+                job_details_loaded = False
+                details_selectors = [
+                    ".jobs-unified-top-card__content-container", # Original selector
+                    ".jobs-details",                             # Original selector
+                    "h2.jobs-unified-top-card__job-title"       # Original selector
+                ]
+                for selector in details_selectors:
+                    try:
+                        WebDriverWait(driver, 10).until( # Original timeout: 10s
+                            EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                        )
+                        job_details_loaded = True
+                        break
+                    except: continue
+
+                if not job_details_loaded:
+                    logging.warning(f"Could not load details for job {index + 1}") # Original log
+                    continue # Original skip
+
+                # Check if Easy Apply button exists (if easy_apply_only is True) (Original logic)
                 if easy_apply_only:
                     easy_apply_selectors = [
-                        (By.CSS_SELECTOR, "button.jobs-apply-button[data-job-id]"), # Standard Easy Apply
-                        (By.CSS_SELECTOR, "button.jobs-s-apply__button"),            # Another variant
-                        (By.XPATH, "//button[.//span[text()='Easy Apply']]"),     # Button containing 'Easy Apply' span
-                        (By.CSS_SELECTOR, ".jobs-apply-button--top-card")          # Top card apply button
+                        "button.jobs-apply-button",         # Original selector
+                        "button[aria-label*='Easy Apply']", # Original selector
+                        "button span[text()='Easy Apply']", # Original selector typo? (text() is XPath), keeping as is. Should be: //button[.//span[text()='Easy Apply']] or similar
+                        ".jobs-s-apply button"              # Original selector
                     ]
-                    for selector_type, selector_value in easy_apply_selectors:
+                    has_easy_apply = False
+                    for selector in easy_apply_selectors:
+                        # Need to handle XPath vs CSS selectors based on the string
+                        elements = []
                         try:
-                            if driver.find_elements(selector_type, selector_value):
-                                easy_apply_present = True
-                                break
-                        except StaleElementReferenceException: # Can happen if pane reloads
-                             human_delay(0.5,1.0)
-                             if driver.find_elements(selector_type, selector_value):
-                                easy_apply_present = True
-                                break
-                        except: # Ignore other errors for this check
-                             pass
+                           if selector.startswith("//") or selector.startswith("(//"):
+                               elements = driver.find_elements(By.XPATH, selector)
+                           else:
+                               elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                        except Exception as find_ex:
+                             logging.debug(f"Error finding easy apply with selector {selector}: {find_ex}")
 
-                    if not easy_apply_present:
-                        logging.info(f"Job {index + 1}: Skipping as 'Easy Apply' button not found (or easy_apply_only=True).")
-                        processed_job_ids.add(job_id) # Mark as processed
-                        continue
-                # Note: Even if not easy_apply_only, we store if it was found
-                job_info["easy_apply"] = easy_apply_present
+                        if len(elements) > 0:
+                            has_easy_apply = True
+                            break
 
+                    if not has_easy_apply:
+                        logging.info(f"Job {index + 1}: Skipping as it's not Easy Apply") # Original log
+                        continue # Original skip
 
-                # --- Extract Details from Right Pane ---
-                # Define selectors for each piece of information
-                title_selectors = [
-                    (By.CSS_SELECTOR, f"{job_details_pane_selector} h2"),
-                    (By.CSS_SELECTOR, ".jobs-unified-top-card__job-title"),
-                    (By.CSS_SELECTOR, ".t-24.t-bold") # More generic title class
-                ]
-                company_selectors = [
-                    (By.CSS_SELECTOR, f"{job_details_pane_selector} .jobs-unified-top-card__company-name a"),
-                    (By.CSS_SELECTOR, f"{job_details_pane_selector} span.jobs-unified-top-card__company-name"), # Sometimes not a link
-                    (By.XPATH, f"//div[contains(@class, 'job-details')]//a[contains(@href, '/company/')]"),
-                    (By.CSS_SELECTOR, ".job-card-container__company-name") # From card if pane fails?
-                ]
-                location_selectors = [
-                    (By.CSS_SELECTOR, f"{job_details_pane_selector} .jobs-unified-top-card__location"),
-                    (By.CSS_SELECTOR, f"{job_details_pane_selector} span.t-black--light.t-14"), # Generic location class?
-                ]
-                date_selectors = [
-                    (By.CSS_SELECTOR, f"{job_details_pane_selector} .jobs-unified-top-card__posted-date"),
-                    (By.CSS_SELECTOR, f"{job_details_pane_selector} span.jobs-jymbii__list-item--bullet"), # Often near date
-                    (By.CSS_SELECTOR, "span.jobs-unified-top-card__subtitle-secondary-grouping") # Container often has date
-                ]
-                description_selectors = [
-                    (By.CSS_SELECTOR, "#job-details,.jobs-description-content__text"), # Primary description areas
-                    (By.CSS_SELECTOR, ".jobs-description"),
-                    (By.CSS_SELECTOR, ".jobs-box__html-content")
-                ]
+                # Extract job details (Original logic and selectors)
+                job_info = {}
 
-                # Extract using the helper function
-                job_info["title"] = _get_element_text(driver, title_selectors, "Unknown Title")
-                job_info["company"] = _get_element_text(driver, company_selectors, "Unknown Company")
-                job_info["location"] = _get_element_text(driver, location_selectors, "Unknown Location")
-                job_info["date_posted"] = _get_element_text(driver, date_selectors, "Unknown Date") # May need parsing
-                job_info["description"] = _get_element_text(driver, description_selectors, "Description not available")
-
-                # Get the specific job URL from the link in the card (often more stable)
+                # Title
                 try:
-                     link_element = job_card.find_element(By.CSS_SELECTOR, "a.job-card-list__title, a.job-card-container__link")
-                     job_info["url"] = link_element.get_attribute("href").split('?')[0] # Clean URL
-                except:
-                     job_info["url"] = driver.current_url # Fallback to current URL
+                    title_selectors = [
+                        "h2.jobs-unified-top-card__job-title", # Original selector
+                        ".jobs-unified-top-card__job-title",   # Original selector
+                        "h2.t-24"                              # Original selector
+                    ]
+                    for selector in title_selectors:
+                        elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                        if elements:
+                            job_info["title"] = elements[0].text.strip()
+                            break
+                    # Check if title was found, add default if not (added for safety, original didn't explicitly handle missing title)
+                    if "title" not in job_info:
+                        job_info["title"] = "Unknown Title"
+                except Exception as e:
+                    logging.warning(f"Could not extract job title: {e}") # Original log
+                    job_info["title"] = "Unknown Title" # Original assignment in except block
 
-                job_info["scraped_at"] = datetime.now().isoformat()
+                # Company
+                try:
+                    company_selectors = [
+                        ".jobs-unified-top-card__company-name",             # Original selector
+                        "a.ember-view.t-black.t-normal",                    # Original selector (Potentially fragile Ember class)
+                        "span.jobs-unified-top-card__subtitle-primary-grouping a" # Original selector
+                    ]
+                    for selector in company_selectors:
+                        elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                        if elements:
+                             # Check for empty text which sometimes happens
+                             text = elements[0].text.strip()
+                             if text:
+                                 job_info["company"] = text
+                                 break
+                    if "company" not in job_info: job_info["company"] = "Unknown Company" # Added default if loop completes without finding
+                except Exception as e:
+                    logging.warning(f"Could not extract company name: {e}") # Original log
+                    job_info["company"] = "Unknown Company" # Original assignment in except
 
-                logging.info(f"Job {index + 1}/{len(job_cards)}: Scraped '{job_info['title']}' at '{job_info['company']}' (Easy Apply: {job_info['easy_apply']})")
+                # Location
+                try:
+                    location_selectors = [
+                        ".jobs-unified-top-card__bullet",                                # Original selector
+                        ".jobs-unified-top-card__subtitle-primary-grouping .jobs-unified-top-card__bullet", # Original selector
+                        "span.jobs-unified-top-card__location"                          # Original selector
+                    ]
+                    for selector in location_selectors:
+                        elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                        if elements:
+                            text = elements[0].text.strip()
+                            if text: # Check if text is not empty
+                                job_info["location"] = text
+                                break
+                    if "location" not in job_info: job_info["location"] = "Unknown Location" # Added default
+                except Exception as e:
+                    logging.warning(f"Could not extract location: {e}") # Original log
+                    job_info["location"] = "Unknown Location" # Original assignment in except
+
+                # Job URL - get current URL as it should be the job details page (Original logic)
+                job_info["url"] = driver.current_url
+
+                # Job Description - try multiple selectors (Original logic)
+                try:
+                    desc_selectors = [
+                        ".jobs-description__content", # Original selector
+                        ".jobs-description-content", # Original selector
+                        ".jobs-box__html-content"    # Original selector
+                    ]
+                    desc_found = False
+                    for selector in desc_selectors:
+                        elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                        if elements:
+                            job_info["description"] = elements[0].text.strip()
+                            desc_found = True
+                            break
+
+                    if not desc_found: # Original fallback logic
+                        # If specific selectors fail, try to get all job details text
+                        job_info["description"] = driver.find_element(By.CSS_SELECTOR, ".jobs-details").text # Original fallback selector
+                except Exception as e:
+                    logging.warning(f"Could not extract job description: {e}") # Original log
+                    job_info["description"] = "Description not available" # Original assignment in except
+
+                # Date Posted/Listed - Often appears in the job details (Original logic)
+                try:
+                    date_selectors = [
+                        ".jobs-unified-top-card__subtitle-secondary-grouping .jobs-unified-top-card__posted-date", # Original selector
+                        ".jobs-posted-time-status", # Original selector
+                        "span.jobs-unified-top-card__posted-date" # Original selector
+                    ]
+                    date_found = False
+                    for selector in date_selectors:
+                        elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                        if elements:
+                            job_info["date_posted"] = elements[0].text.strip()
+                            date_found = True
+                            break
+                    if not date_found: job_info["date_posted"] = "Unknown" # Default if not found
+                except Exception as e:
+                    logging.warning(f"Could not extract date posted: {e}") # Original log
+                    job_info["date_posted"] = "Unknown" # Original assignment in except
+
+                # Add a timestamp (Original logic)
+                job_info["scraped_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S") # Original format
+
+                logging.info(f"Job {index + 1}: Scraped {job_info.get('title', 'Unknown')} at {job_info.get('company', 'Unknown')}") # Original log
                 job_data.append(job_info)
-                processed_job_ids.add(job_id) # Mark as successfully processed
 
-                human_delay(0.8, 1.5) # Pause before next job
-
-            except StaleElementReferenceException:
-                logging.warning(f"StaleElementReferenceException encountered processing job card {index + 1}. Skipping.")
-                # Don't add job_id to processed if stale before basic info grab
-                human_delay(0.5, 1.0) # Small pause before retrying loop
-                continue # Move to the next card
+                human_delay(1.0, 2.0) # Using helper, original position
             except Exception as e:
-                logging.error(f"Error processing job card {index + 1}: {e}", exc_info=False) # Don't need full traceback always
-                 # Mark as processed to avoid retrying problematic card
-                if 'job_id' in locals() and job_id:
-                    processed_job_ids.add(job_id)
-                continue
+                logging.error(f"Error processing job card {index + 1}: {e}") # Original log
+                continue # Original skip
 
-        logging.info(f"\n--- Scraping Complete for this Page ---")
-        logging.info(f"Successfully scraped {len(job_data)} jobs from this page.")
-
+        logging.info("\n--- Scraping Complete for First Page ---") # Original log
     except Exception as e:
-        logging.error(f"A critical error occurred during the scraping process on this page: {e}", exc_info=True)
-        driver.save_screenshot(f"debug_scrape_critical_error_{time.strftime('%Y%m%d%H%M%S')}.png")
+        logging.error(f"Error during job scraping: {e}") # Original log
 
-    return job_data
+    if not job_data:
+        logging.warning("No job data was collected from the first page. Check logs and selectors.") # Original log
+
+    return job_data # Original return

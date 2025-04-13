@@ -2,13 +2,11 @@
 import logging
 
 def setup_logging():
-    """Configures the root logger."""
+    """Configures the root logger based on the original script's setup."""
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - %(message)s',
+        format='%(asctime)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
-    # Suppress noisy logs from underlying libraries if needed
-    # logging.getLogger("urllib3").setLevel(logging.WARNING)
-    # logging.getLogger("selenium").setLevel(logging.WARNING)
+    # No suppression added, keeping it exactly as the initial setup
     logging.info("Logging configured.")
